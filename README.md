@@ -1,6 +1,7 @@
 # SCAT
 Species-Climate Associations Trends (SCAT)
-Duarte S. Viana
+
+Author: Duarte S. Viana
 
 The files contained in this repository provide the R code for simulating and analysing the data corresponding to the mentioned paper. Below we provide a brief description of the workflow and respective files. Note that most of the code for data downloading and management was taken from Harris et al. (2018; PeerJ 6, e4278).
 
