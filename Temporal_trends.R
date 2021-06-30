@@ -10,22 +10,20 @@
 args = commandArgs(trailingOnly=TRUE)
 output.file <- args[1]
 
-# try to get SGE_TASK_ID from submit script, otherwise fall back to 1
-task.id = as.integer(Sys.getenv("SGE_TASK_ID", "1"))
+# try to get SLURM_ARRAY_TASK_ID  from submit script, otherwise fall back to 1
+task.id = as.integer(Sys.getenv("SLURM_ARRAY_TASK_ID", "1"))
 
-library(raster)
-library(dplyr)
-library(tidyr)
 library(rstan)
 library(brms)
-# try to get NSLOTS from submit script, otherwise fall back to 1
-slots = as.integer(Sys.getenv("NSLOTS", "1"))
+#options(buildtools.check = function(action) TRUE )
+# try to get SLURM_CPUS_PER_TASK from submit script, otherwise fall back to 1
+cpus_per_task = as.integer(Sys.getenv("SLURM_CPUS_PER_TASK", "1"))
 rstan_options(auto_write = TRUE)
-options(mc.cores = slots)
+options(mc.cores = cpus_per_task)
 
 # Load data
-load("Responsivenes_data.Rdata")
-load("Data_id.Rdata")
+load("results_v3.Rdata")
+load("Data_id_v2.Rdata")
 
 # Define the the different approaches
 time.extent <- 1:3
@@ -34,7 +32,7 @@ method <- c("BRT_lr.01","BRT_lr.001","GAM_kest","GAM_k3")
 r2.type <- 3:4
 meth <- expand.grid(time.extent=time.extent,data.type=data.type,method=method,r2.type=r2.type)
 # Species performance metrics
-resp <- c("abund.mean","range.size")
+resp <- c("abund.mean","abund.cv", "occupancy")
 
 # output list
 mm <- list()
@@ -62,9 +60,9 @@ lresi <- lresi[lresi$aou %in% dat.in,]
 lresi$species <- factor(lresi$aou)
 lresi$r2[lresi$r2<=0] <- 0.0001
 lresi$time <- scale(lresi$time)
+lresi$occupancy <- lresi$Npres/unlist(lapply(idata,length)[meth$time.extent[task.id]])
 for(i in unique(lresi$species)){
   lresi$abund.mean[lresi$species==i] <- lresi$abund.mean[lresi$species==i]/max(lresi$abund.mean[lresi$species==i])
-  lresi$range.size[lresi$species==i] <- lresi$range.size[lresi$species==i]/max(lresi$range.size[lresi$species==i])
 }
 
 # Fit multilevel models
@@ -72,13 +70,22 @@ m.time <- brm(r2 ~ time + (time|species),
               data=lresi, family=Beta, chains=4, thin=1, iter=3000, warmup=1000, 
               control = list(adapt_delta = .99), cores=4)
 mm[[1]] <- m.time
-rn <- 1
-for(r in resp){
-  rn <- rn + 1
-  formula.r <- as.formula(paste(r, " ~ time + (time|species)", sep=""))
-  m.time <- brm(formula.r, data=lresi, family=gaussian, chains=4, thin=1, iter=3000, warmup=1000, cores=4)
-  mm[[rn]] <- m.time
-}
+
+m.abund.mean <- brm(abund.mean ~ time + (time|species),
+                    data=lresi, family=gaussian, chains=4, thin=1, iter=3000, warmup=1000, 
+                    control = list(adapt_delta = .99), cores=4)
+mm[[2]] <- m.abund.mean
+
+m.abund.cv <- brm(abund.cv ~ time + (time|species),
+                  data=lresi, family=gaussian, chains=4, thin=1, iter=3000, warmup=1000, 
+                  control = list(adapt_delta = .99), cores=4)
+mm[[3]] <- m.abund.cv
+
+m.occup <- brm(occupancy ~ time + (time|species),
+               data=lresi, family=Beta, chains=4, thin=1, iter=3000, warmup=1000, 
+               control = list(adapt_delta = .99), cores=4)
+mm[[4]] <- m.occup
 
 save(mm,file=output.file)
+
 
