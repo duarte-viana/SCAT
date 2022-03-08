@@ -24,12 +24,50 @@ library(VoCC)
 
 # Load data
 load("Data_id_v2.Rdata")
-load("species_names.Rdata")
-sps$aou <- as.character(sps$aou)
+load("phylo_vcv.Rdata")
+load("specialization_index.Rdata")
 iucn <- read.csv("IUCN_status.csv")
 iucn$sci <- paste(iucn$genusName,iucn$speciesName,sep="_")
 traits <- read.table("traits.txt",header=T,sep="\t")
 names(traits) <- c("species","lifespan","log.mass","body.length","wingspan",names(traits[,6:ncol(traits)]))
+acad <- read.csv("ACAD Global 2021.02.05-filtered.csv")
+mig <- read.table("specieslist3_1_migbehav_v1_0.txt",header=T,sep="\t")
+hwi <- read.table("Traits_Sheard_HWI.txt",header=T,sep="\t")
+
+# Traits
+traits <- spdf
+
+# Add habitat specialization index (from Martin and Fahrig 2018)
+traits1.1 <- left_join(traits,ssi[,c("sci","SSI")],by=c("phylo"="sci"))
+traits1.2 <- left_join(traits,ssi[,c("sci","SSI")],by="sci")
+traits1.1[is.na(traits1.1$SSI),] <- traits1.2[is.na(traits1.1$SSI),]
+traits <- as.data.frame(traits1.1)
+traits$SSI <- as.numeric(traits$SSI)
+a <- which(is.na(traits$SSI))
+unique(traits$sci[a])
+
+# from Sheard et al. 2020; https://doi.org/10.1038/s41467-020-16313-6 
+hwi$phylo <- gsub(' ', '_', hwi$"Tree.name")
+traits <- left_join(traits,hwi[,c("phylo","HWI","Body.mass..log.","Territoriality","Habitat")],by="phylo")
+a <- which(is.na(traits$HWI))
+unique(traits$phylo[a])
+traits$main.habitat <- factor(traits$Habitat)
+levels(traits$main.habitat) <- c("dense","semi-open","open")
+
+# From Eyres et al. 2017;  https://doi.org/10.1111/jav.01308
+traits <- left_join(traits,mig[,c("IOC3_1_Binomial","Migratory_status")],by=c("sci"="IOC3_1_Binomial"))
+a <- which(is.na(traits$Migratory_status))
+unique(traits$phylo[a])
+traits[traits$phylo %in% unique(traits$phylo[a]),"Migratory_status"] <- mig[mig$IOC3_1_Binomial %in% unique(traits$phylo[a]),"Migratory_status"]
+a <- which(is.na(traits$Migratory_status))
+unique(traits$phylo[a])
+
+# From ACAD; https://pif.birdconservancy.org/avian-conservation-assessment-database/
+acad$sci <- gsub(' ', '_', acad$Scientific.Name)
+traits <- left_join(traits,acad[,c("sci","PS.g","BD.g","ND.g","TB.c","TN.c","PT.c","CCS.max","Half.Life")],by="sci")
+a <- which(is.na(traits$TB.c))
+unique(traits$phylo[a])
+
 
 # Define the the different approaches
 time.extent <- 1:3
@@ -45,13 +83,15 @@ resp <- c("abund.mean","abund.cv", "occupancy")
 
 # Pool posteriors of the time models of the different approaches
 
+# First, print results of the trends of climate matching estimated with BRT_lr.01 model (model 25)
+load("bbs-8862844-25.Rdata")
+summary(mm[[1]])
+
 wcc <- which(meth$time.extent==1 & meth$data.type=="abund" & meth$r2.type==4)
 res.list <- list()
 pop.eff <- list()
 for(i in 1:length(wcc)){
-  load(paste("bbs-3940237-", wcc[i],".Rdata", sep = ""))
-  #if(i %in% 1:4) load(paste("bbs-7458865-", wcc[i],".Rdata", sep = "")) # clim set 1
-  #if(i %in% 5:8) load(paste("bbs-7473622-", wcc[i]-48,".Rdata", sep = "")) # clim set 2
+  load(paste("bbs-8862844-", wcc[i],".Rdata", sep = ""))
   # Manual extraction of coefficients for r2
   m.time <- mm[[1]]
   t.fe <- as.data.frame(fixef(m.time,summary=FALSE))
@@ -97,46 +137,8 @@ re.sp.sum <- re.sp %>%
             mean.abund.cv = mean(coef.abund.cv),lower.abund.cv=quantile(coef.abund.cv,0.05),upper.abund.cv=quantile(coef.abund.cv,0.95),
             mean.occupancy = mean(coef.occupancy),lower.occupancy=quantile(coef.occupancy,0.05),upper.occupancy=quantile(coef.occupancy,0.95))
 
-# Add species names
-sp.all <- unique(re.sp.sum$species)
-sp.names <- data.frame(aou=sp.all)
-sp.names <- left_join(sp.names,sps[,c("aou","sci","sporder","family")],by="aou")
-birdtree.sp <- read.csv("BLIOCPhyloMasterTax.csv")
-all(sp.names$sci %in% birdtree.sp$TipLabel)
-
-# Correct unmatched species names
-mis.sp <- sp.names[!(sp.names$sci %in% birdtree.sp$TipLabel),]
-mis.sp <- left_join(mis.sp, sps[,c("TipLabel","sci")], by="sci")
-mis.sp$TipLabel <- as.character(mis.sp$TipLabel)
-mis.sp$TipLabel[mis.sp$sci=="Circus_hudsonius"] <- "Circus_hudsonius"
-#mis.sp$TipLabel[mis.sp$sci=="Ammospiza_leconteii"] <- "Ammodramus_leconteii"
-mis.sp$TipLabel[mis.sp$sci=="Setophaga_coronata"] <- "Dendroica_coronata"
-#mis.sp$TipLabel[mis.sp$sci=="Setophaga_nigrescens"] <- "Dendroica_nigrescens"
-sp.names$phylo <- sp.names$sci
-for(i in mis.sp$sci) sp.names$phylo[sp.names$sci==i] <- mis.sp$TipLabel[mis.sp$sci==i]
-# Add species names
-re.sp.sum <- left_join(re.sp.sum,sp.names,by=c("species"="aou"))
-
-# Add threat status
-iucn$sci <- paste(iucn$genusName,iucn$speciesName,sep="_")
-re.sp.sum <- left_join(re.sp.sum,iucn[,c("sci","redlistCategory")],by="sci")
-re.sp.sum$redlistCategory <- as.character(re.sp.sum$redlistCategory)
-re.sp.sum$redlistCategory[re.sp.sum$phylo=="Picoides_villosus"] <- "Least Concern"
-re.sp.sum$redlistCategory[re.sp.sum$phylo=="Dryocopus_pileatus"] <- "Least Concern"
-
-# Add species traits
-re.sp.sum1 <- left_join(re.sp.sum,traits,by=c("phylo"="species"))
-re.sp.sum2 <- left_join(re.sp.sum,traits,by=c("sci"="species"))
-re.sp.sum1[is.na(re.sp.sum1$log.mass),] <- re.sp.sum2[is.na(re.sp.sum1$log.mass),]
-re.sp.sum <- as.data.frame(re.sp.sum1)
-
-# Add habitat specialization index
-load("specialization_index.Rdata")
-re.sp.sum1 <- left_join(re.sp.sum,ssi[,c("sci","SSI")],by=c("phylo"="sci"))
-re.sp.sum2 <- left_join(re.sp.sum,ssi[,c("sci","SSI")],by="sci")
-re.sp.sum1[is.na(re.sp.sum1$SSI),] <- re.sp.sum2[is.na(re.sp.sum1$SSI),]
-re.sp.sum <- as.data.frame(re.sp.sum1)
-re.sp.sum$SSI <- as.numeric(re.sp.sum$SSI)
+# Add traits
+re.sp.sum <- left_join(re.sp.sum,traits,by=c("species"="aou"))
 
 #-------------------------
 
@@ -275,11 +277,29 @@ for(i in re.sp.sum$species){
 plot(re.sp.sum$lcc.hilda,re.sp.sum$mean.r2)
 cor.test(re.sp.sum$lcc.hilda,re.sp.sum$mean.r2)
 
-#save(re.sp.sum,sites.in,file="re.sp.sum.Rdata")
+save(re.sp.sum,sites.in,file="re.sp.sum.Rdata")
 
 #-------------------------
+# Results and figures
+
+load("res_list.Rdata")
+load("re.sp.sum.Rdata")
+re.sp.sum <- as.data.frame(re.sp.sum)
 
 # Figure 2: R2 temporal trend according to the different methods
+
+load("R2_sp_year.Rdata")
+
+gg.trends <- resg %>% 
+  group_by(method,year) %>%
+  summarise(r2 = mean(r2, na.rm=T))  %>%
+  ggplot(aes(x=year, y=r2, colour=method)) + 
+  geom_point()+
+  geom_smooth(method=lm) +
+  labs(x="Year", y="Climate matching",colour="") +
+  theme(legend.direction="horizontal", legend.position="top",
+        legend.title = element_text(size = 10),legend.text = element_text(size = 8))
+
 
 # Population-level effect
 wcc <- which(meth$time.extent==1 & meth$data.type=="abund" & meth$r2.type==4)
@@ -289,8 +309,7 @@ quantile(pop.est,c(0.05,0.95))
 lapply(pop.eff,length)
 pop.r2 <- data.frame(method=rep(meth$method[wcc],each=8000), b=pop.est)
 
-quartz(height=4,width=4)
-pop.r2 %>%
+gg.posterior <- pop.r2 %>%
   mutate(grid_mean = b) %>%
   ggplot(aes(y = method, x = grid_mean)) + # , fill = stat(abs(x) < .9)
   #geom_hline(yintercept = levels(factor(re.sp$sporder)), col="grey") +
@@ -299,35 +318,31 @@ pop.r2 %>%
   labs(x =expression(paste(Delta,"climate matching")), y = "Species-climate model") +
   theme(plot.margin=unit(c(0.5,0.5,0.5,0.5),"cm"))
 
+# Compose figure 
+quartz(height=4,width=7)
+ggarrange(gg.trends, gg.posterior, nrow=1)
 
 #-------------------------
 
-# Figure 3: Group R2 temporal trends by threat status and taxonomic order
+# Figure 3: habitat specialiasation
 
 cor.test(re.sp.sum$SSI,re.sp.sum$mean.r2)
 
-# Figures posterior for order and threat status
+gg.time.bm <- re.sp.sum %>%
+  ggplot(aes(x=Body.mass..log., y=mean.r2)) + 
+  geom_point(col="black", size=1) +
+  geom_smooth(method="lm", col="black") +
+  labs(x = "Body mass (log)", y = expression(paste(Delta,"climate matching"))) 
 
-levels(re.sp.sum$main.habitat)[8] <- "riparian"
-
-gg.time.habitat <- re.sp.sum[re.sp.sum$main.habitat %in% c("forest","open","riparian","semi_open","shrub"),] %>%
-  ggplot(aes(x=main.habitat, y=mean.r2)) + 
-  geom_boxplot() +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  labs(x ="Main habitat", y = expression(paste(Delta,"climate matching"))) +
-  coord_flip()
-
-gg.time.ssi <- re.sp.sum %>%
+gg.time.hs <- re.sp.sum %>%
   ggplot(aes(x=SSI, y=mean.r2)) + 
   geom_point(col="black", size=1) +
   geom_smooth(method="lm", col="black") +
   labs(x = "Habitat specialisation", y = expression(paste(Delta,"climate matching")))
 
-
 # Compose figure 
 quartz(height=3,width=7)
-ggarrange(gg.time.habitat, gg.time.ssi, nrow=1)
-
+ggarrange(gg.time.bm, gg.time.hs, nrow=1)
 
 
 #-------------------------
@@ -349,7 +364,7 @@ gg.abund <- re.sp.sum %>%
   geom_point(data=re.sp.sum[sig.r2.abund,], aes(x=mean.r2, y=mean.abund), col="purple", size=1) +
   geom_hline(yintercept = 0, linetype = "dashed", size=1, col="blue", alpha = 0.5) +
   geom_vline(xintercept = 0, linetype = "dashed", size=1, col="red", alpha = 0.5) +
-  geom_smooth(method="lm", col="black") +
+  #geom_smooth(method="lm", col="black") +
   labs(x = expression(paste(Delta,"climate matching")), y = expression(paste(Delta,"abundance")))
 
 sig.occup <- re.sp.sum$lower.occupancy<=0 & re.sp.sum$upper.occupancy>=0
@@ -366,32 +381,45 @@ gg.occupancy <- re.sp.sum %>%
   geom_point(data=re.sp.sum[sig.r2.occup,], aes(x=mean.r2, y=mean.occupancy), col="purple", size=1) +
   geom_hline(yintercept = 0, linetype = "dashed", size=1, col="blue", alpha = 0.5) +
   geom_vline(xintercept = 0, linetype = "dashed", size=1, col="red", alpha = 0.5) +
-  geom_smooth(method="lm", col="black") +
+  #geom_smooth(method="lm", col="black") +
   labs(x = expression(paste(Delta,"climate matching")), y = expression(paste(Delta,"occupancy")))
 
-gg.time.threat <- re.sp.sum %>%
-  ggplot(aes(x=redlistCategory, y=mean.r2)) + 
+
+give.n <- function(x){
+  return(c(y = 0.315, label = length(x)))
+}
+
+re.sp.sum$PT.c <- factor(re.sp.sum$PT.c)
+gg.time.poptrend <- re.sp.sum %>%
+  ggplot(aes(x=PT.c, y=mean.r2)) + 
   geom_boxplot() +
+  ylim(-0.35,0.32) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x ="Population trend", y = expression(paste(Delta,"climate matching"))) +
+  coord_flip() +
+  stat_summary(fun.data = give.n, geom = "text", size = 3)
+
+re.sp.sum$TB.c <- factor(re.sp.sum$TB.c)
+gg.time.threat <- re.sp.sum %>%
+  ggplot(aes(x=TB.c, y=mean.r2)) + 
+  geom_boxplot() +
+  ylim(-0.35,0.32) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   labs(x ="Threat status", y = expression(paste(Delta,"climate matching"))) +
-  coord_flip()
+  coord_flip() +
+  stat_summary(fun.data = give.n, geom = "text", size = 3)
 
-quartz(height=3,width=9)
-ggarrange(gg.abund, gg.occupancy, gg.time.threat, nrow=1)
+quartz(height=5.5,width=6)
+ggarrange(gg.abund, gg.occupancy, gg.time.poptrend, gg.time.threat, nrow=2)
 
 
 # Correlation between trends in performance and responsiveness to climate
 cor.test(re.sp.sum$mean.r2,re.sp.sum$mean.abund)
 cor.test(re.sp.sum$mean.r2,re.sp.sum$mean.occupancy)
 
-
-
 #-------------------------
 
-# Extract results
-
-table(re.sp.sum$main.habitat)
-table(re.sp.sum$redlistCategory)
+# Extract more results
 
 re.sp.sum$sig.r2 <- sig.r2
 re.sp.sum$sig.abund <- sig.abund
@@ -401,28 +429,159 @@ re.sp.sum$trend[re.sp.sum$mean.r2<0] <- "negative"
 re.sp.sum$trend[re.sp.sum$mean.r2>0] <- "positive"
 re.sp.sum$trend[re.sp.sum$lower.r2<=0 & re.sp.sum$upper.r2>=0] <- "null"
 
-tableS1 <- as.data.frame(re.sp.sum[,c("phylo","sporder","mean.r2","sig.r2","mean.abund","sig.abund",
-                                      "mean.occupancy","sig.occup","redlistCategory","main.habitat")])
-tableS1$mean.r2 <- format(round(tableS1$mean.r2,3),nsmall=3)
-
 # Table S1
+tableS1 <- as.data.frame(re.sp.sum[,c("phylo","sporder","mean.r2","sig.r2","mean.abund","sig.abund",
+                                      "mean.occupancy","sig.occup","TB.c")])
+tableS1$mean.r2 <- format(round(tableS1$mean.r2,3),nsmall=3)
 tableS1$mean.abund <- format(round(tableS1$mean.abund,3),nsmall=3)
 tableS1$mean.occupancy <- format(round(tableS1$mean.occupancy,3),nsmall=3)
 tableS1$mean.r2[!tableS1$sig.r2] <- paste(tableS1$mean.r2[!tableS1$sig.r2],"*",sep="")
 tableS1$mean.abund[!tableS1$sig.abund] <- paste(tableS1$mean.abund[!tableS1$sig.abund],"*",sep="")
 tableS1$mean.occupancy[!tableS1$sig.occup] <- paste(tableS1$mean.occupancy[!tableS1$sig.occup],"*",sep="")
-tableS1 <- tableS1[,c("phylo","sporder","mean.r2","mean.abund","mean.occupancy","redlistCategory","main.habitat")]
+tableS1 <- tableS1[,c("phylo","sporder","mean.r2","mean.abund","mean.occupancy")]
 setwd("/Users/Viana/Documents/Papers/iDiv/Paper_BBS_R2-time")
 write.table(tableS1,file="Table_S1.txt",row.names = FALSE, sep="\t")
 save(re.sp.sum,file="re.sp.sum.Rdata")
 
-# Figure S2
-quartz(height=3,width=7)
-par(mfrow=c(1,2))
-par(mar=c(5,4.5,1,1))
-plot(re.sp.sum$log.mass,re.sp.sum$mean.r2,ylab=expression(paste(Delta,"climate matching")),xlab="Body mass (log)",las=1,pch=16)
-par(mar=c(5,4.5,1,1))
-boxplot(re.sp.sum$mean.r2~as.character(re.sp.sum$migration),las=1,xlab="",ylab="")
-abline(h=0,lty=2)
 
+# Figure S1: Phylogeny
+setwd("/Users/Viana/Documents/Papers/iDiv/Paper_BBS_R2-time/Phylo_100_BirdTree")
+sp.trees <- ape::read.nexus("output.nex")
+library(phytools)
+trait.y<-setNames(re.sp.sum$mean.r2,re.sp.sum$phylo)
+# Plot
+library(RColorBrewer)
+pal <-  colorRampPalette(c("blue","yellow","red"))
+cons.tree <- consensus.edges(sp.trees,method="mean.edge")
+cons.tree <- multi2di(cons.tree)
+obj<-contMap(cons.tree,trait.y,plot=FALSE)
+obj<-setMap(obj,colors=pal(20)) # colors=rev(brewer.pal(11,"RdYlBu"))
+quartz(height=5.5,width=5.5)
+plot(obj,fsize=c(0.5,0.7),outline=FALSE,lwd=c(2,7),leg.txt="",legend=30,
+     type="fan",xlim=c(-140,145),ylim=c(-120,120))
+
+
+# Figure S2: trends in climate matching vs traits
+
+gg.time.hwi <- re.sp.sum %>%
+  ggplot(aes(x=HWI, y=mean.r2)) + 
+  geom_point(col="black", size=1) +
+  labs(x = "Hand-Wing Index", y = expression(paste(Delta,"climate matching"))) +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12))
+
+gg.time.mig <- re.sp.sum %>%
+  ggplot(aes(x=Migratory_status, y=mean.r2)) + 
+  geom_boxplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x ="Migratory status", y = expression(paste(Delta,"climate matching"))) +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+gg.time.habitat <- re.sp.sum %>%
+  ggplot(aes(x=main.habitat, y=mean.r2)) + 
+  geom_boxplot() +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(x ="Main habitat", y = expression(paste(Delta,"climate matching"))) +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Compose figure 
+quartz(height=4,width=9)
+ggarrange(gg.time.hwi,gg.time.mig,gg.time.habitat, nrow=1)
+
+# Correlations traits-trends climate matching
+cor.test(re.sp.sum$HWI,re.sp.sum$mean.r2)
+summary(aov(mean.r2~Migratory_status,data=re.sp.sum))
+summary(aov(mean.r2~main.habitat,data=re.sp.sum))
+
+
+# Figure S3: baseline values of climate matching vs traits
+gg.time.bm <- re.sp.sum %>%
+  ggplot(aes(x=Body.mass..log., y=baseline.r2)) + 
+  geom_point(col="black", size=1) +
+  labs(x = "Body mass (log)", y = "Baseline climate matching") +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12))
+
+gg.time.ssi <- re.sp.sum %>%
+  ggplot(aes(x=SSI, y=baseline.r2)) + 
+  geom_point(col="black", size=1) +
+  labs(x = "Habitat specialisation", y = "") +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12))
+
+gg.time.hwi <- re.sp.sum %>%
+  ggplot(aes(x=HWI, y=baseline.r2)) + 
+  geom_point(col="black", size=1) +
+  labs(x = "Hand-Wing Index", y = "") +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12))
+
+gg.time.mig <- re.sp.sum %>%
+  ggplot(aes(x=Migratory_status, y=baseline.r2)) + 
+  geom_boxplot() +
+  labs(x ="Migratory status", y = "Baseline climate matching") +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+gg.time.habitat <- re.sp.sum %>%
+  ggplot(aes(x=main.habitat, y=baseline.r2)) + 
+  geom_boxplot() +
+  labs(x ="Main habitat", y = "") +
+  theme(axis.text=element_text(size=12),axis.title=element_text(size=12),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Compose figure 
+quartz(height=6,width=9)
+ggarrange(gg.time.bm,gg.time.ssi,gg.time.hwi,gg.time.mig,gg.time.habitat, nrow=2)
+
+# Correlations traits-baseline climate matching
+cor.test(re.sp.sum$SSI,re.sp.sum$baseline.r2)
+cor.test(re.sp.sum$Body.mass..log.,re.sp.sum$baseline.r2)
+cor.test(re.sp.sum$HWI,re.sp.sum$baseline.r2)
+summary(aov(baseline.r2~Migratory_status,data=re.sp.sum))
+summary(aov(baseline.r2~main.habitat,data=re.sp.sum))
+
+
+# Extract population trends from Sauer et al. 2011
+library(tabulizer)
+tab <- extract_tables("https://oup.silverchair-cdn.com/oup/backfile/Content_public/Journal/auk/128/1/10.1525_auk.2010.09220/3/sd1_87.pdf?Expires=1643015249&Signature=kp06HUCzQA0YY9dVysOHdIF2ZmowUgMbT5ahfKBza89n2IRC~S5MatM3V24wlRQ8nd5sK9905sXAzhTLEMSrxA3z~0nA7vBGwDHZFhvwI2lJU-JKRyyuyL6~awm05x7HB~eixwDiaMsIBHZaLnfVYPpwAjTPQDYaRRFKyHs99K~DN6uH1O6ho0kPabW~P3lV5KweJ9lVXUK3SzBL3KUBMMonGBsHCyF2GcUrGpXAXjOcdd7r4gS9NJRI5ziklVb-a~T1ZsDybXXVNHTrGlBhzI~s7OMtRzfFjD9fDczBSJl8U6BmrgTYmJQFFikf5fiTTOq3W-toM4F4ysQmRsZ0Mg__&Key-Pair-Id=APKAIE5G5CRDK6RD3PGA",
+                      output = "data.frame",pages=1:9)
+
+tab2 <- list()
+for(i in 1:9){
+  if(i==1){
+    header <- 2
+    col.trend <- 5
+  } 
+  if(i!=1){
+    header <- 3
+    col.trend <- 6
+  } 
+  dati <- tab[[i]][-c(1:header),]
+  trend <- gsub( " .*$", "", dati[,col.trend] )
+  blank <- which(trend=="")
+  for(j in blank) dati[j-1,1] <- paste(dati[j-1,1],dati[j,1],sep=" ")
+  tab2[[i]] <- data.frame(species.Sauer=dati[-blank,1],trend.Sauer=trend[-blank])
+}
+trends.Sauer <- do.call("rbind",tab2)
+trends.Sauer$phylo <- sub("(.*\\()(.*)(\\))", "\\2", trends.Sauer$species.Sauer)
+trends.Sauer$phylo <- gsub(' ', '_', trends.Sauer$phylo)
+substr(trends.Sauer$trend.Sauer[substr(trends.Sauer$trend.Sauer,1,1)=="–"],1,1) <- "-"
+trends.Sauer$trend.Sauer <- as.numeric(trends.Sauer$trend.Sauer)
+
+re.sp.sum <- left_join(re.sp.sum,trends.Sauer,by="phylo")
+
+# Figure S5
+quartz(height=3,width=7)
+par(mfrow=c(1,2),mar=c(4,4,1,1))
+plot(re.sp.sum$trend.Sauer,re.sp.sum$mean.abund,xlim=c(-6,4),xlab="Sauer's et al. estimates",ylab="Our estimates")
+plot(re.sp.sum$PT.c,re.sp.sum$mean.abund,xlab="ACAD's estimates (categorised)",ylab="Our estimates")
+
+
+# Simulation rationale
+# The random error (in proportion) decreases as the mean increases
+res <- c()
+for(i in 1:100) res[i] <- mean(abs(i-rpois(1000,i))/i)
+# Figure S6
+quartz(height=4,width=5)
+par(mar=c(4,4,1,1))
+plot(1:100, res, xlab="Mean count", ylab="Proportion of error")
 
