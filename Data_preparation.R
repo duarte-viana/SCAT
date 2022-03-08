@@ -161,8 +161,6 @@ library(DBI)
 library(dplyr)
 #library(dbdplyr)
 
-setwd("~/Documents/Papers/iDiv/Paper_sDiv/Data/BBS")
-
 bbs_db <- dbConnect(RSQLite::SQLite(), 'bbs_sqlite.db')
 sps <- tbl(bbs_db, "breed_bird_survey_species") %>% data.frame()
 
@@ -173,7 +171,6 @@ sps$sci <- sci.names
 birdtree.sp <- read.csv("BLIOCPhyloMasterTax.csv")
 sps <- left_join(sps, birdtree.sp[,c("TipLabel","English")], by=c("english_common_name" = "English"))
 
-setwd("~/Documents/Papers/iDiv/Paper_sDiv/BBS_analysis")
 save(sps,file="species_names.Rdata")
 
 
@@ -182,7 +179,6 @@ save(sps,file="species_names.Rdata")
 
 # Descriptive patterns and phylogenetic relatedness
 
-setwd("~/Documents/Papers/iDiv/Paper_BBS_R2-time/EVE")
 load("results_v3.Rdata")
 load("Data_id_v2.Rdata")
 
@@ -287,7 +283,6 @@ write.csv(sp.names, "sp.names.csv", row.names = FALSE)
 # We downloaded 100 trees from the *Ericsson All Species* dataset for our analyses. 
 # Once processed, save the resulting .nex file and read in the multiphylo object 
 # using functions in the `ape` package
-setwd("/Users/Viana/Documents/Papers/iDiv/Paper_BBS_R2-time/Phylo_100_BirdTree")
 sp.trees <- ape::read.nexus("output.nex")
 # Now check to make sure that all of the species names are represented in the tree. 
 # Here, we have to include the underscore once again, as this is included in Birdtree.org phylogeny subsets. 
